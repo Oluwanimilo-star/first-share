@@ -94,3 +94,34 @@ Notes kept while building, mainly to help with the DevEx report. Dates in Africa
 - Real `/swap` RFQ payload: presence of `rfq.orderId`, the exact `typedDataToSign` encoding.
 - Which quote routes bStock returns at $5 (LiquidMesh SWAP and/or PcsXRfq RFQ) and during which sessions.
 - Ondo minimum on BSC, and that USDT is an accepted counter-token for bStock.
+
+## 2026-10-07 — v3 (judge-proof demo path)
+
+### What changed
+- Client-side **Try demo** toggle that works with live keys: per-request `x-first-share-demo: 1` header →
+  mocked trade routes, live market data. Mock quotes take a price hint (`hp`/`hs`/`hpf`) from the live list
+  so the demo quote matches the price the user just saw, for any of the ~490 live tokens.
+- Quote state lifted into a `useQuote` hook (30 s countdown, auto-refresh, stale-request guard) shared by the
+  quote step, confirm step and bottom nav. Executor re-quotes when a price is >20 s old.
+- NYSE-timetable fallback for step 4, balance preflight, network guard, issuer compare (bStocks / Ondo /
+  xStocks) with a "Verified token" badge, share math pie, share card (html-to-image), local buy ledger → P/L.
+
+### New DevEx findings
+20. **`/rwa/price` answers for tokens that `/rwa/tokens` doesn't list.** AAPLB (`0x431a…9b7a`) and AMZNB
+    (`0x1a4b…eb00`) are missing from `/rwa/tokens?platformId=bstock` but `/rwa/price` and
+    `/rwa/underlying-profile` still return data for them. It isn't documented whether that means "delisted",
+    "paused" or "list is paginated / filtered". A `status`/`listed` flag on the token list would remove the guess.
+21. **`priceImpactPercent` can come back as `"0.0000000000"`-style strings** with 10 decimals on RFQ-ish
+    LiquidMesh routes; documenting precision (or returning a number) would save formatting code.
+22. **No xStocks in RWA Data** (see #10) means there's no way to build a "verified contract" check for
+    xStocks — the compare table has to say "Not in Binance RWA data".
+23. **Reown AppKit with `allowUnsupportedChain: false`** auto-opens an undismissable "Switch network" sheet
+    when an injected wallet is on chain 1. Good default; the app still keeps its own in-page guard (no quote,
+    no signing off chain 56) for the plain-injected path and for wallets that switch mid-flow.
+
+### Verified
+- `scripts/v3_clickthrough.py`: all 9 steps in Try-demo mode, mobile 390×844 + desktop 1280×900, against live
+  market data: **0 page errors, 0 raw-error strings** in the page. Also: forced market-status failure → step 4
+  shows the estimated status; no wallet → "Connect wallet to rehearse" is enabled; share PNG downloads.
+- `scripts/v3_network_guard.py`: mock injected wallet on Ethereum (refuses all sign/send) → our guard blocks the
+  quote (0 `/api/quote` calls), switch → quote + live preflight (empty test wallet → "Top up first").

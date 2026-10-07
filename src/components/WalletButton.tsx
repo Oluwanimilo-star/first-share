@@ -124,7 +124,11 @@ function InjectedButton({ compact }: { compact?: boolean }) {
           )}
         </div>
       )}
-      {error ? <p className="text-sm text-rose-700">{error.message.split("\n")[0]}</p> : null}
+      {error ? (
+        <p className="text-sm text-rose-700">
+          {/rejected|denied/i.test(error.message) ? "You cancelled in your wallet. Tap a wallet above to try again." : "That wallet didn't connect. Unlock it and try again, or pick another one."}
+        </p>
+      ) : null}
     </div>
   );
 }

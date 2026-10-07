@@ -7,6 +7,10 @@ export const BINANCE_CHAIN_ID = "56"; // Binance Web3 API uses string chain ids
 export const USDT_BSC = "0x55d398326f99059fF775485246999027B3197955" as const;
 export const USDT_DECIMALS = 18;
 
+// Native BNB sentinel used by the aggregator (same as 1inch / LiquidMesh convention).
+export const NATIVE_BNB = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE" as const;
+export const isNativeBnb = (a?: string | null) => !!a && a.toLowerCase() === NATIVE_BNB.toLowerCase();
+
 // The "first share" ticket size, in USD (USDT).
 export const BUY_AMOUNT_USD = 5;
 export const MAX_AMOUNT_USD = 50; // server-side hard cap for safety

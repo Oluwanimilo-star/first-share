@@ -2,8 +2,8 @@
 /**
  * Wallet setup.
  *  - With NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID: Reown AppKit (WalletConnect) + wagmi.
- *      Desktop: injected wallets (MetaMask / Binance Wallet extensions, EIP-6963) + QR code for phone wallets.
- *      Mobile: deep links into MetaMask / Binance Wallet / Trust Wallet, or injected inside a wallet's in-app browser.
+ *      Desktop: injected wallets (MetaMask / Rabby / Zerion / OKX / Trust / Binance extensions, EIP-6963) + QR code for phone wallets.
+ *      Mobile: deep links into MetaMask / Trust / OKX, or injected inside a wallet's in-app browser.
  *  - Without it: plain wagmi injected connector (desktop extensions + wallet in-app browsers only).
  * BNB Smart Chain mainnet (56) only.
  */
@@ -21,8 +21,11 @@ export const APPKIT_ENABLED = WC_PROJECT_ID.length > 0;
 // WalletConnect Explorer wallet ids (shown first in the AppKit modal).
 export const WALLET_IDS = {
   metamask: "c57ca95b47569778a828d19178114f4db188b89b763c899ba0be274e97267d96",
-  binance: "8a0ee50d1f22f6651afcae7eb4253e52a3310b90af5daef78a8c4929a9bb99d4",
   trust: "4622a2b2d6af1c9844944291e5e7351a6aa24cd7b23099efac1b2fd875da31a0",
+  rabby: "18388be9ac2d02726dbac9777c96efaac06d744b2f6d580fccdd4127a6d01fd1",
+  zerion: "ecc4036f814562b41a5268adc86270fba1365471402006302e70169465b7ac18",
+  okx: "971e689d0a5be527bac79629b4ee9b925e82208e5168b733496a09c0faed0709",
+  binance: "8a0ee50d1f22f6651afcae7eb4253e52a3310b90af5daef78a8c4929a9bb99d4",
 };
 
 const transports = { [bscChain.id]: http(PUBLIC_BSC_RPC) };
@@ -53,7 +56,7 @@ if (APPKIT_ENABLED) {
       url: siteUrl,
       icons: [`${siteUrl}/icon.png`],
     },
-    featuredWalletIds: [WALLET_IDS.metamask, WALLET_IDS.binance, WALLET_IDS.trust],
+    featuredWalletIds: [WALLET_IDS.metamask, WALLET_IDS.trust, WALLET_IDS.rabby, WALLET_IDS.zerion, WALLET_IDS.okx, WALLET_IDS.binance],
     allWallets: "SHOW",
     enableInjected: true,
     enableWalletConnect: true,
@@ -62,7 +65,7 @@ if (APPKIT_ENABLED) {
     allowUnsupportedChain: false,
     features: { analytics: false, email: false, socials: false, swaps: false, onramp: false, send: false, history: false },
     themeMode: "light",
-    themeVariables: { "--w3m-accent": "#F0B90B", "--w3m-border-radius-master": "4px", "--w3m-font-family": "inherit" },
+    themeVariables: { "--w3m-z-index": 1000, "--w3m-accent": "#F0B90B", "--w3m-border-radius-master": "4px", "--w3m-font-family": "inherit" },
   });
 } else {
   config = createConfig({
@@ -86,5 +89,8 @@ export function walletDeepLinks(url: string) {
   return [
     { name: "MetaMask", href: `https://metamask.app.link/dapp/${noProto}` },
     { name: "Trust Wallet", href: `https://link.trustwallet.com/open_url?coin_id=20000714&url=${encodeURIComponent(url)}` },
+    { name: "OKX Wallet", href: `https://www.okx.com/download?deeplink=${encodeURIComponent("okx://wallet/dapp/url?dappUrl=" + encodeURIComponent(url))}` },
+    { name: "Rabby", href: `https://rabby.io/` },
+    { name: "Zerion", href: `https://link.zerion.io/other/wc?uri=` },
   ];
 }

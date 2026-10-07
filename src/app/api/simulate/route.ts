@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { isDemoMode, w3w } from "@/lib/server/w3w";
+import { isDemoRequest, w3w } from "@/lib/server/w3w";
 import { mockSimulate, mockSimulateSwap } from "@/lib/server/mock";
 import { bad, isEvmAddress, isUintString, reply } from "@/lib/server/http";
 import { BINANCE_CHAIN_ID } from "@/lib/constants";
@@ -13,7 +13,7 @@ export const dynamic = "force-dynamic";
  * (`hint` is only used to make the stateless demo mock realistic; never forwarded.)
  */
 export async function POST(req: NextRequest) {
-  const demo = isDemoMode();
+  const demo = isDemoRequest(req);
   let body: { tx?: { from?: string; to?: string; data?: string; value?: string }; hint?: { amountIn?: string; tokenOut?: string; amountOut?: string } };
   try {
     body = await req.json();

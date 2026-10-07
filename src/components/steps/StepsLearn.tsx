@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Badge, Card, DemoChip, ErrorBox, Explainer, ExtLink, SectionTitle, Spinner, Stat, StockLogo } from "../ui";
 import type { StockOption } from "@/lib/stocks";
 import { PLATFORM_LABEL } from "@/lib/stocks";
@@ -7,6 +7,9 @@ import type { MarketStatus, StockBundle } from "@/lib/types";
 import { PROTECTION_COPY, REASON_COPY, REASON_MSG_COPY, STATUS_COPY } from "@/lib/explain";
 import { countdown, localTime, pct, shortAddr, usd } from "@/lib/format";
 import { BSCSCAN } from "@/lib/constants";
+import { estimateNyse, ESTIMATE_REASON_COPY } from "@/lib/marketHours";
+import { ShareSlice } from "../ShareMath";
+import { IssuerCompare, VerifiedBadge } from "../IssuerCompare";
 
 /* ───────────── Step 1: pick a stock ───────────── */
 export function StepPick(p: {
@@ -20,6 +23,23 @@ export function StepPick(p: {
   selected: StockOption | null;
   onSelect: (s: StockOption) => void;
 }) {
+  // (Flow remounts this component per platform, so the search box resets when switching.)
+  const [query, setQuery] = useState("");
+  const [showUnpriced, setShowUnpriced] = useState(false);
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return p.stocks;
+    const parts = q.split(/\s+/).filter(Boolean);
+    return p.stocks.filter((s) => {
+      const hay = `${s.ticker} ${s.symbol} ${s.name} ${s.blurb}`.toLowerCase();
+      return parts.every((part) => hay.includes(part));
+    });
+  }, [p.stocks, query]);
+  // Never show a "—" price: tokens without a live price are tucked away (and not pickable).
+  const priced = filtered.filter((s) => Number(s.tokenPrice) > 0);
+  const unpriced = filtered.filter((s) => !(Number(s.tokenPrice) > 0));
+  const pricedTotal = p.stocks.filter((s) => Number(s.tokenPrice) > 0).length;
+
   return (
     <div className="space-y-4">
       <SectionTitle step={1} title="Pick a company you know" subtitle="Start with a brand you use every day. You'll spend just $5." />
@@ -43,15 +63,47 @@ export function StepPick(p: {
         ))}
       </div>
 
-      {p.loading ? (
-        <div className="flex items-center gap-2 p-6 text-slate-500">
-          <Spinner /> Loading stocks…
+      <label className="block">
+        <span className="sr-only">Search stocks</span>
+        <div className="relative">
+          <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" aria-hidden>
+            🔍
+          </span>
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search by ticker or name (e.g. NVDA, Apple)"
+            className="w-full rounded-xl border border-black/10 bg-white py-3 pl-10 pr-3 text-[15px] shadow-sm outline-none ring-bnb/30 placeholder:text-slate-400 focus:ring-2"
+            autoComplete="off"
+            spellCheck={false}
+          />
         </div>
-      ) : p.error ? (
+        {!p.loading && !p.error ? (
+          <p className="mt-1.5 text-xs text-slate-500">
+            {priced.length} of {pricedTotal} {p.platform === "bstock" ? "bStocks" : "Ondo tokens"} with a live price
+            {query.trim() ? " matching your search" : " · favorites on top"}
+          </p>
+        ) : null}
+      </label>
+
+      {p.loading ? (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2" aria-busy>
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="flex items-center gap-3 rounded-2xl bg-white p-3 shadow-sm">
+              <div className="h-11 w-11 animate-pulse rounded-xl bg-slate-200" />
+              <div className="flex-1 space-y-2">
+                <div className="h-3 w-24 animate-pulse rounded bg-slate-200" />
+                <p className="text-xs text-slate-400">Price loading…</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : p.error && p.stocks.length === 0 ? (
         <ErrorBox onRetry={p.retry}>{p.error}</ErrorBox>
       ) : (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          {p.stocks.map((s) => {
+        <div className="grid max-h-[min(60vh,520px)] grid-cols-1 gap-3 overflow-y-auto overscroll-contain pr-0.5 sm:grid-cols-2" data-testid="stock-grid">
+          {priced.map((s) => {
             const active = p.selected?.address === s.address;
             const st = s.marketStatus ? STATUS_COPY[s.marketStatus as MarketStatus] : null;
             return (
@@ -70,16 +122,45 @@ export function StepPick(p: {
                   </div>
                   <p className="truncate text-sm text-slate-600">{s.blurb}</p>
                   <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
-                    <span className="font-semibold tabular-nums">{s.tokenPrice ? usd(s.tokenPrice) : "—"}</span>
+                    <span className="font-semibold tabular-nums">{usd(s.tokenPrice)}</span>
                     {st ? <span className="text-slate-500">{st.emoji} {st.label.split(" —")[0]}</span> : null}
                     {s.kind === "ETF" ? <Badge tone="info">ETF</Badge> : null}
+                    {!s.inApi ? <Badge tone="warn">Limited data</Badge> : null}
                   </div>
                 </div>
                 {active ? <span className="text-xl">✅</span> : null}
               </button>
             );
           })}
-          {p.stocks.length === 0 ? <p className="text-slate-500">No tokens returned for this platform.</p> : null}
+          {priced.length === 0 ? (
+            <p className="col-span-full rounded-xl bg-white p-4 text-center text-slate-500 ring-1 ring-black/5">
+              {unpriced.length
+                ? `${unpriced.map((u) => u.symbol).slice(0, 3).join(", ")} ${unpriced.length === 1 ? "has" : "have"} no live price right now${p.platform === "bstock" ? " — try the Ondo tab" : " — try bStocks"}.`
+                : <>No stocks match &ldquo;{query.trim()}&rdquo;. Try another ticker or clear the search.</>}
+            </p>
+          ) : null}
+          {unpriced.length ? (
+            <div className="col-span-full">
+              <button className="text-xs font-semibold text-slate-500 underline" onClick={() => setShowUnpriced(!showUnpriced)}>
+                {showUnpriced ? "Hide" : "Show"} {unpriced.length} without a live price right now
+              </button>
+              {showUnpriced ? (
+                <ul className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  {unpriced.map((s) => (
+                    <li key={s.address} className="flex items-center gap-3 rounded-2xl bg-white/60 p-3 text-slate-500 ring-1 ring-black/5">
+                      <StockLogo ticker={s.ticker} color="#94a3b8" logoUrl={null} size={36} />
+                      <div className="min-w-0">
+                        <p className="font-semibold">
+                          {s.name} <span className="text-xs">{s.symbol}</span>
+                        </p>
+                        <p className="text-xs">No live price right now — not pickable until it&apos;s quoted again.</p>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       )}
       <div className="flex justify-end">
@@ -90,8 +171,10 @@ export function StepPick(p: {
 }
 
 /* ───────────── Step 2: what is a tokenized stock ───────────── */
-export function StepWhat({ stock, demo }: { stock: StockOption; demo: boolean }) {
+export function StepWhat({ stock, bundle, serverDemo, amountUsd }: { stock: StockOption; bundle: StockBundle | null; serverDemo: boolean; amountUsd: number }) {
   const platform = PLATFORM_LABEL[stock.platformId] ?? stock.platformId;
+  const price = Number(stock.tokenPrice);
+  const ratio = Number(bundle?.profile.data?.tokenToShareRatio ?? stock.tokenToShareRatio ?? 1) || 1;
   return (
     <div className="space-y-4">
       <SectionTitle step={2} title="What is a tokenized stock?" subtitle={`${stock.symbol} is a token that follows ${stock.name}'s share price.`} />
@@ -125,6 +208,8 @@ export function StepWhat({ stock, demo }: { stock: StockOption; demo: boolean })
         </div>
       </Card>
 
+      {price > 0 ? <ShareSlice usd={amountUsd} tokens={amountUsd / price} estimate symbol={stock.symbol} ticker={stock.ticker} name={stock.name} ratio={ratio} /> : null}
+
       <div className="grid gap-3 sm:grid-cols-2">
         <Card>
           <p className="font-bold">✅ What you get</p>
@@ -144,8 +229,13 @@ export function StepWhat({ stock, demo }: { stock: StockOption; demo: boolean })
         </Card>
       </div>
 
+      <IssuerCompare stock={stock} bundle={bundle} demo={serverDemo} />
+
       <Card>
-        <p className="text-sm text-slate-500">Token details</p>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-sm text-slate-500">Token details</p>
+          <VerifiedBadge stock={stock} demo={serverDemo} />
+        </div>
         <div className="mt-2 grid grid-cols-2 gap-3 text-sm">
           <div>
             <p className="text-slate-500">Issuer</p>
@@ -160,20 +250,36 @@ export function StepWhat({ stock, demo }: { stock: StockOption; demo: boolean })
             <ExtLink href={`${BSCSCAN}/token/${stock.address}`}>{shortAddr(stock.address)} on BscScan ↗</ExtLink>
           </div>
         </div>
-        <p className="mt-3 text-xs text-slate-500">
-          Other issuers do the same thing: <b>bStocks</b> (symbols end in &ldquo;B&rdquo;), <b>Ondo</b> (end in &ldquo;on&rdquo;) and <b>xStocks</b> (end in &ldquo;x&rdquo;). They are
-          different tokens — always check the contract address. {demo ? "" : ""}
-        </p>
+        <p className="mt-3 text-xs text-slate-500">Always check the contract address before buying — copycat tokens can reuse a famous name.</p>
       </Card>
     </div>
   );
 }
 
+function companyDescription(profile: NonNullable<StockBundle["profile"]["data"]>): string | null {
+  const ci = profile.companyInfo;
+  if (!ci) return null;
+  return ci.descriptionEn || ci.description || null;
+}
+
 /* ───────────── Step 3: is it really backed? ───────────── */
 export function StepBacked({ stock, bundle, loading, error, retry }: { stock: StockOption; bundle: StockBundle | null; loading: boolean; error: string | null; retry: () => void }) {
-  const profile = bundle?.profile.code === 0 ? bundle.profile.data : null;
-  const ratio = profile?.tokenToShareRatio ?? stock.tokenToShareRatio;
-  const protections = Object.entries(profile?.protections ?? {});
+  const profileOk = bundle?.profile.code === 0 ? bundle.profile.data : null;
+  const profileSoftFail = bundle && bundle.profile.code !== 0;
+  const ratio = profileOk?.tokenToShareRatio ?? stock.tokenToShareRatio;
+  const protections = Object.entries(profileOk?.protections ?? {});
+  const desc = profileOk ? companyDescription(profileOk) : null;
+
+  // Hard error only when Flow said so (both halves failed) and we have nothing useful.
+  if (!loading && error && !profileOk && !ratio) {
+    return (
+      <div className="space-y-4">
+        <SectionTitle step={3} title="Is it really backed?" subtitle="Trust, but verify. Here's the evidence." />
+        <ErrorBox onRetry={retry}>We couldn&apos;t load the backing details right now. Please try again in a moment.</ErrorBox>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
       <SectionTitle step={3} title="Is it really backed?" subtitle="Trust, but verify. Here's the evidence." />
@@ -187,10 +293,13 @@ export function StepBacked({ stock, bundle, loading, error, retry }: { stock: St
         <div className="flex items-center gap-2 p-6 text-slate-500">
           <Spinner /> Checking the backing…
         </div>
-      ) : error ? (
-        <ErrorBox onRetry={retry}>{error}</ErrorBox>
       ) : (
         <>
+          {profileSoftFail ? (
+            <div className="rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-900 ring-1 ring-amber-200">
+              Some backing details are temporarily unavailable. Showing what we have.
+            </div>
+          ) : null}
           <Card>
             <div className="flex items-center justify-between">
               <p className="text-sm text-slate-500">Token-to-share ratio</p>
@@ -202,13 +311,19 @@ export function StepBacked({ stock, bundle, loading, error, retry }: { stock: St
             <p className="mt-1 text-sm text-slate-600">
               {ratio && Number(ratio) !== 1
                 ? "Slightly more than 1 — usually because dividends get reinvested into the token over time."
-                : "One token tracks exactly one real share."}
+                : ratio
+                  ? "One token tracks exactly one real share."
+                  : "We couldn't load the exact ratio just now — check again in a moment."}
             </p>
           </Card>
           <Card>
             <p className="font-bold">Proof documents</p>
             <ul className="mt-2 divide-y divide-slate-100">
-              {protections.length === 0 ? <li className="py-2 text-sm text-slate-500">The API didn&apos;t return any reports for this token.</li> : null}
+              {protections.length === 0 ? (
+                <li className="py-2 text-sm text-slate-500">
+                  No attestation links came back for this token right now. That doesn&apos;t mean it isn&apos;t backed — try again later, or check the issuer&apos;s website.
+                </li>
+              ) : null}
               {protections.map(([key, v]) => {
                 const copy = PROTECTION_COPY[key] ?? { title: key, text: "" };
                 return (
@@ -222,6 +337,8 @@ export function StepBacked({ stock, bundle, loading, error, retry }: { stock: St
                           <ExtLink href={v.url}>Open report ↗</ExtLink>
                           {bundle?.demo ? <span className="ml-2 text-xs text-amber-700">(demo: example link format)</span> : null}
                         </p>
+                      ) : v.supported ? (
+                        <p className="mt-1 text-xs text-slate-500">Supported, but no public link was returned this time.</p>
                       ) : (
                         <p className="mt-1 text-xs text-slate-500">Not offered for this token.</p>
                       )}
@@ -231,22 +348,22 @@ export function StepBacked({ stock, bundle, loading, error, retry }: { stock: St
               })}
             </ul>
           </Card>
-          {profile?.companyInfo ? (
+          {profileOk?.companyInfo && (desc || profileOk.companyInfo.industry || profileOk.companyInfo.ceo) ? (
             <Card>
-              <p className="font-bold">About {profile.underlyingFullName}</p>
-              <p className="mt-1 text-[15px] text-slate-700">{profile.companyInfo.descriptionEn}</p>
+              <p className="font-bold">About {profileOk.underlyingFullName || stock.name}</p>
+              {desc ? <p className="mt-1 text-[15px] text-slate-700">{desc}</p> : null}
               <div className="mt-3 flex flex-wrap gap-2 text-xs">
-                {profile.companyInfo.industry ? <Badge>{profile.companyInfo.industry}</Badge> : null}
-                {profile.companyInfo.ceo ? <Badge>CEO: {profile.companyInfo.ceo}</Badge> : null}
-                {(profile.companyInfo.conceptsEn ?? []).map((c) => (
+                {profileOk.companyInfo.industry ? <Badge>{profileOk.companyInfo.industry}</Badge> : null}
+                {profileOk.companyInfo.ceo ? <Badge>CEO: {profileOk.companyInfo.ceo}</Badge> : null}
+                {(profileOk.companyInfo.conceptsEn ?? []).map((c) => (
                   <Badge key={c} tone="info">
                     {c}
                   </Badge>
                 ))}
               </div>
-              {profile.companyInfo.website ? (
+              {profileOk.companyInfo.website ? (
                 <p className="mt-2 text-sm">
-                  <ExtLink href={profile.companyInfo.website}>{profile.companyInfo.website.replace(/^https?:\/\//, "")} ↗</ExtLink>
+                  <ExtLink href={profileOk.companyInfo.website}>{profileOk.companyInfo.website.replace(/^https?:\/\//, "")} ↗</ExtLink>
                 </p>
               ) : null}
             </Card>
@@ -277,6 +394,23 @@ function useNow(ms = 30000) {
   return now;
 }
 
+/** Client-side fallback when the API left marketStatus null (shouldn't happen after server normalize). */
+function resolveStatusCopy(marketStatus: string | null | undefined, openState: boolean | null | undefined) {
+  if (marketStatus && STATUS_COPY[marketStatus as MarketStatus]) return STATUS_COPY[marketStatus as MarketStatus];
+  if (openState) {
+    return {
+      label: "Tradable now",
+      tone: "good" as const,
+      emoji: "🟢",
+      text: "Market makers are quoting this token right now. The exact US session label wasn't returned, but you can place an order.",
+    };
+  }
+  if (openState === false) {
+    return STATUS_COPY.closed;
+  }
+  return null;
+}
+
 export function StepMarket(p: {
   stock: StockOption;
   bundle: StockBundle | null;
@@ -287,12 +421,19 @@ export function StepMarket(p: {
   setDemoStatus: (s: string | undefined) => void;
 }) {
   const now = useNow();
-  const market = p.bundle?.market.code === 0 ? p.bundle.market.data : null;
-  const si = market?.statusInfo;
-  const copy = si ? STATUS_COPY[si.marketStatus] : null;
+  const marketOk = p.bundle?.market.code === 0 ? p.bundle.market.data : null;
+  const si = marketOk?.statusInfo;
+  const apiCopy = resolveStatusCopy(si?.marketStatus, si?.openState ?? p.stock.openState);
+  // This step must never fail: if the live status is missing, work it out from the NYSE timetable.
+  const est = estimateNyse(now);
+  const estimated = !p.loading && !apiCopy;
+  const copy = apiCopy ?? (est.open ? STATUS_COPY.regular : STATUS_COPY.closed);
+  const openNow = estimated ? est.open : (si?.openState ?? p.stock.openState) === true;
+  const nextClose = estimated ? est.nextCloseTime : si?.nextCloseTime;
+  const nextOpen = estimated ? est.nextOpenTime : si?.nextOpenTime;
   const nyNow = new Date(now).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" });
-  const tone = copy?.tone ?? "neutral";
-  const ring = { good: "ring-emerald-300 bg-emerald-50", ok: "ring-sky-300 bg-sky-50", warn: "ring-amber-300 bg-amber-50", bad: "ring-rose-300 bg-rose-50", neutral: "ring-slate-200 bg-white" }[tone];
+  const tone = copy.tone;
+  const ring = { good: "ring-emerald-300 bg-emerald-50", ok: "ring-sky-300 bg-sky-50", warn: "ring-amber-300 bg-amber-50", bad: "ring-rose-300 bg-rose-50" }[tone];
 
   return (
     <div className="space-y-4">
@@ -301,36 +442,61 @@ export function StepMarket(p: {
         <div className="flex items-center gap-2 p-6 text-slate-500">
           <Spinner /> Checking the market…
         </div>
-      ) : p.error ? (
-        <ErrorBox onRetry={p.retry}>{p.error}</ErrorBox>
-      ) : si && copy ? (
+      ) : (
         <>
-          <div className={`rounded-2xl p-5 ring-2 ${ring}`}>
+          <div className={`rounded-2xl p-5 ring-2 ${ring}`} data-testid="market-status">
             <div className="flex items-start justify-between gap-2">
               <div>
                 <p className="text-4xl">{copy.emoji}</p>
-                <p className="mt-2 text-2xl font-extrabold">{copy.label}</p>
-                <p className="mt-1 text-sm font-semibold text-slate-600">{si.openState ? "✔ Tradable now" : "✖ Not tradable right now"}</p>
+                <p className="mt-2 text-2xl font-extrabold">{estimated ? (est.open ? "Open — regular hours" : "Market closed") : copy.label}</p>
+                <p className="mt-1 text-sm font-semibold text-slate-600">{openNow ? "✔ Tradable now" : "✖ Not tradable right now"}</p>
               </div>
-              <DemoChip show={!!p.bundle?.demo} />
+              {estimated ? (
+                <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 ring-1 ring-black/10">
+                  🕒 Estimated from market hours
+                </span>
+              ) : (
+                <DemoChip show={!!p.bundle?.demo} />
+              )}
             </div>
             <div className="mt-4 grid grid-cols-2 gap-3">
-              {si.nextCloseTime ? <Stat label="Closes" value={countdown(si.nextCloseTime, now)} sub={localTime(si.nextCloseTime)} /> : null}
-              {si.nextOpenTime ? <Stat label={si.marketStatus === "closed" ? "Trading resumes" : "Regular session opens"} value={countdown(si.nextOpenTime, now)} sub={localTime(si.nextOpenTime)} /> : null}
+              {nextClose ? <Stat label="Closes" value={countdown(nextClose, now)} sub={localTime(nextClose)} /> : null}
+              {nextOpen ? (
+                <Stat label={copy === STATUS_COPY.closed || !openNow ? "Trading resumes" : "Regular session opens"} value={countdown(nextOpen, now)} sub={localTime(nextOpen)} />
+              ) : null}
             </div>
           </div>
           <Explainer>
-            <p>{copy.text}</p>
-            {si.reasonCode && si.reasonCode !== "TRADING" ? (
-              <p>
-                <b>Why:</b> {REASON_COPY[si.reasonCode]} {si.reasonMsg ? REASON_MSG_COPY[si.reasonMsg] ?? si.reasonMsg : ""}
-              </p>
-            ) : null}
+            {estimated ? (
+              <>
+                <p>{ESTIMATE_REASON_COPY[est.reason]}</p>
+                <p className="text-sm text-slate-600">
+                  The live status didn&apos;t come back just now, so this is <b>estimated from the New York Stock Exchange timetable</b> (9:30am–4pm New York, Monday to Friday,
+                  minus holidays). Tokenized stocks can sometimes trade a little outside these hours — the quote step will tell you for sure.
+                </p>
+              </>
+            ) : (
+              <>
+                <p>{copy.text}</p>
+                {si?.reasonCode && si.reasonCode !== "TRADING" ? (
+                  <p>
+                    <b>Why:</b> {REASON_COPY[si.reasonCode] ?? "The issuer has limited trading for now."}{" "}
+                    {si.reasonMsg ? REASON_MSG_COPY[si.reasonMsg] ?? "" : ""}
+                  </p>
+                ) : null}
+              </>
+            )}
             <p className="text-sm text-slate-600">Times are shown in your own time zone.</p>
           </Explainer>
-          {!si.openState ? (
+          {estimated ? (
+            <button onClick={p.retry} className="text-sm font-semibold text-slate-600 underline">
+              Check the live status again
+            </button>
+          ) : null}
+          {!openNow ? (
             <div className="rounded-xl bg-white p-3 text-sm text-slate-700 ring-1 ring-black/5">
-              You can keep going to learn the rest of the steps. When you get to the quote, it may be refused until the market reopens.
+              You can keep going to learn the rest of the steps. When you get to the quote, it may be refused until the market reopens — or flip on <b>Try demo</b> to
+              rehearse the whole thing now.
             </div>
           ) : null}
           {p.bundle?.demo ? (
@@ -351,8 +517,6 @@ export function StepMarket(p: {
             </Card>
           ) : null}
         </>
-      ) : (
-        <ErrorBox onRetry={p.retry}>Market status wasn&apos;t returned for this token.</ErrorBox>
       )}
     </div>
   );
@@ -364,7 +528,7 @@ export function StepGap({ stock, bundle }: { stock: StockOption; bundle: StockBu
   const market = bundle?.market.code === 0 ? bundle.market.data : null;
   const ratio = Number(bundle?.profile.data?.tokenToShareRatio ?? stock.tokenToShareRatio ?? 1) || 1;
   const tokenPrice = Number(priceRow?.tokenPrice ?? stock.tokenPrice ?? NaN);
-  const refPrice = Number(priceRow?.referencePrice ?? market?.marketData.referencePrice ?? stock.referencePrice ?? NaN);
+  const refPrice = Number(priceRow?.referencePrice ?? market?.marketData?.referencePrice ?? stock.referencePrice ?? NaN);
   const perShare = tokenPrice / ratio;
   const gap = ((perShare - refPrice) / refPrice) * 100;
   const abs = Math.abs(gap);
@@ -375,8 +539,8 @@ export function StepGap({ stock, bundle }: { stock: StockOption; bundle: StockBu
       : abs < 2
         ? { tone: "ok" as const, text: "A normal, small gap. Common outside busy trading hours." }
         : { tone: "warn" as const, text: "A big gap! You might pay noticeably more (or less) than the stock is worth. Consider waiting." };
-  const hi = Number(market?.marketData.high52W ?? NaN);
-  const lo = Number(market?.marketData.low52W ?? NaN);
+  const hi = Number(market?.marketData?.high52W ?? NaN);
+  const lo = Number(market?.marketData?.low52W ?? NaN);
   const pos = isFinite(hi) && isFinite(lo) && hi > lo ? Math.min(100, Math.max(0, ((refPrice - lo) / (hi - lo)) * 100)) : null;
 
   return (

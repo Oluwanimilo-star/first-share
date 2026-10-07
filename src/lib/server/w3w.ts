@@ -20,6 +20,17 @@ export function isDemoMode(): boolean {
   return !process.env.BINANCE_W3W_API_KEY || !process.env.BINANCE_W3W_API_SECRET;
 }
 
+/**
+ * Per-request demo: the user flipped the "Try demo" toggle in the UI. Trade routes
+ * (quote / swap / approve / simulate / order / tx) then answer with mocked, clearly
+ * labelled data even when live keys exist. Market data stays live. Forcing a mock is
+ * always safe — it can only ever *remove* the ability to trade, never add it.
+ */
+export const DEMO_HEADER = "x-first-share-demo";
+export function isDemoRequest(req: Request): boolean {
+  return isDemoMode() || req.headers.get(DEMO_HEADER) === "1";
+}
+
 type Query = Record<string, string | number | boolean | undefined | null>;
 
 export function buildQueryString(query?: Query): string {

@@ -1,7 +1,7 @@
 import "server-only";
 import { createHash, randomUUID } from "node:crypto";
 import { CURATED_STOCKS, ONDO_DEMO_STOCKS, findAnyStock } from "../stocks";
-import { USDT_BSC, BINANCE_CHAIN_ID } from "../constants";
+import { USDT_BSC, BINANCE_CHAIN_ID, isNativeBnb } from "../constants";
 import { demoStatusInfo } from "./marketClock";
 import type {
   ApproveTx,
@@ -32,11 +32,27 @@ const DEMO_PRICES: Record<string, number> = {
   MSFT: 517.35,
   AMZN: 221.89,
   GOOGL: 246.54,
+  META: 612.4,
   SPY: 668.2,
+  QQQ: 598.1,
+  AMD: 168.3,
+  AVGO: 342.5,
+  PLTR: 88.2,
+  COIN: 214.7,
+  ORCL: 178.9,
+  INTC: 24.6,
+  HOOD: 42.1,
+  BABA: 118.4,
+  TSM: 192.3,
+  MU: 112.8,
+  ARM: 148.2,
+  IBM: 224.5,
+  CRCL: 86.0,
+  MSTR: 348.0,
 };
 
 // Small on-chain premium/discount per ticker so the "price gap" step has something to explain.
-const DEMO_GAP_BPS: Record<string, number> = { AAPL: 12, NVDA: -18, TSLA: 35, MSFT: 6, AMZN: -9, GOOGL: 14, SPY: 3 };
+const DEMO_GAP_BPS: Record<string, number> = { AAPL: 12, NVDA: -18, TSLA: 35, MSFT: 6, AMZN: -9, GOOGL: 14, META: 8, SPY: 3, QQQ: 4, AMD: -11 };
 
 const DEMO_ROUTER = "0x1de460f363AF910f51726DEf188F9004276Bf4bc"; // illustrative router address
 const DEMO_PERMIT2 = "0x000000000022D473030F116dDEE9F6B43aC78BA3"; // canonical Permit2
@@ -168,6 +184,9 @@ const COMPANY: Record<string, { full: string; ceo: string | null; web: string; i
   AMZN: { full: "Amazon.com, Inc.", ceo: "Andy Jassy", web: "https://www.amazon.com", industry: "Consumer Discretionary", concepts: ["Magnificent 7", "Cloud", "E-commerce"], desc: "Amazon.com, Inc. operates online retail stores and Amazon Web Services (AWS), a leading cloud computing platform." },
   GOOGL: { full: "Alphabet Inc.", ceo: "Sundar Pichai", web: "https://abc.xyz", industry: "Communication Services", concepts: ["Magnificent 7", "AI", "Advertising"], desc: "Alphabet Inc. is the parent company of Google, YouTube, Android and other businesses." },
   SPY: { full: "SPDR S&P 500 ETF Trust", ceo: null, web: "https://www.ssga.com", industry: "ETF", concepts: ["ETF", "Index"], desc: "An exchange-traded fund that tracks the S&P 500 index of 500 large US companies. Managed by State Street Global Advisors." },
+  META: { full: "Meta Platforms, Inc.", ceo: "Mark Zuckerberg", web: "https://www.meta.com", industry: "Communication Services", concepts: ["Magnificent 7", "Social"], desc: "Meta Platforms operates Facebook, Instagram, WhatsApp and Reality Labs." },
+  QQQ: { full: "Invesco QQQ Trust", ceo: null, web: "https://www.invesco.com", industry: "ETF", concepts: ["ETF", "Nasdaq"], desc: "An ETF that tracks the Nasdaq-100 index of the largest non-financial companies listed on Nasdaq." },
+  AMD: { full: "Advanced Micro Devices, Inc.", ceo: "Lisa Su", web: "https://www.amd.com", industry: "Semiconductors", concepts: ["AI Chips", "CPUs"], desc: "AMD designs CPUs, GPUs and adaptive SoCs for PCs, gaming and data centers." },
 };
 
 // GET /api/v1/dex/market/rwa/underlying-market
@@ -200,25 +219,55 @@ export function mockUnderlyingMarket(address: string, statusOverride?: string | 
   });
 }
 
-function routeTokens(toAddress: string) {
-  const s = findAnyStock(toAddress);
+/**
+ * Optional hint from the client's "Try demo" toggle: the live list price / symbol / issuer of
+ * the stock being traded, so demo quotes match the real price the user just saw (and work for
+ * any of the ~490 live tokens, not just the curated ones). Only ever used to shape mock data.
+ */
+export type DemoHint = { address: string; price?: number; symbol?: string; platformId?: string };
+
+type MetaStock = { symbol: string; platformId: string; ticker: string } | null;
+
+function tokenMeta(address: string, hint?: DemoHint) {
+  if (isNativeBnb(address) || !address) {
+    return { symbol: "BNB", price: 780, decimals: "18", stock: null as MetaStock };
+  }
+  if (address.toLowerCase() === USDT_BSC.toLowerCase()) {
+    return { symbol: "USDT", price: 1, decimals: "18", stock: null as MetaStock };
+  }
+  const s = findAnyStock(address);
+  const h = hint && hint.address.toLowerCase() === address.toLowerCase() ? hint : undefined;
+  const hintPrice = h?.price && isFinite(h.price) && h.price > 0 ? h.price : null;
   const p = demoPrices(s?.ticker ?? "AAPL");
+  const stock: MetaStock = s
+    ? { symbol: s.symbol, platformId: s.platformId, ticker: s.ticker }
+    : h?.symbol
+      ? { symbol: h.symbol, platformId: h.platformId === "ondo" ? "ondo" : "bstock", ticker: h.symbol }
+      : null;
+  return { symbol: stock?.symbol ?? "STOCK", price: hintPrice ?? Number(p.token), decimals: "18", stock };
+}
+
+function routeTokens(fromAddress: string, toAddress: string, hint?: DemoHint) {
+  const from = tokenMeta(fromAddress, hint);
+  const to = tokenMeta(toAddress, hint);
   return {
-    s,
-    tokenPrice: Number(p.token),
+    fromStock: from.stock,
+    toStock: to.stock,
+    fromPrice: from.price,
+    toPrice: to.price,
     fromToken: {
-      tokenContractAddress: USDT_BSC,
-      tokenSymbol: "USDT",
-      tokenUnitPrice: "1.0002",
-      decimal: "18",
+      tokenContractAddress: fromAddress,
+      tokenSymbol: from.symbol,
+      tokenUnitPrice: String(from.price),
+      decimal: from.decimals,
       isHoneyPot: false,
       taxRate: "0",
     },
     toToken: {
       tokenContractAddress: toAddress,
-      tokenSymbol: s?.symbol ?? "STOCK",
-      tokenUnitPrice: p.token,
-      decimal: "18",
+      tokenSymbol: to.symbol,
+      tokenUnitPrice: String(to.price),
+      decimal: to.decimals,
       isHoneyPot: false,
       taxRate: "0",
     },
@@ -230,34 +279,60 @@ function toUnits(amountTokens: number): string {
   return (BigInt(Math.floor(amountTokens * 1e9)) * 10n ** 9n).toString();
 }
 
-// GET /api/v1/dex/aggregator/quote
-export function mockQuote(q: { amount: string; toTokenAddress: string; userWalletAddress?: string }): OCResult<QuoteRoute[]> {
-  const { s, tokenPrice, fromToken, toToken } = routeTokens(q.toTokenAddress);
-  if (!s) return err(40421, "Insufficient liquidity for this trading pair");
-  const usd = Number(BigInt(q.amount) / 10n ** 14n) / 1e4;
-  if (s.platformId === "ondo" && usd < 20) {
+/** Read the optional demo hint (hp = price, hs = symbol, hpf = platform) from a query string. */
+export function readDemoHint(sp: URLSearchParams, address: string | null | undefined): DemoHint | undefined {
+  if (!address) return undefined;
+  const price = Number(sp.get("hp"));
+  const symbol = (sp.get("hs") ?? "").replace(/[^A-Za-z0-9.]/g, "").slice(0, 16) || undefined;
+  const platformId = sp.get("hpf") === "ondo" ? "ondo" : sp.get("hpf") === "bstock" ? "bstock" : undefined;
+  if (!symbol && !(price > 0)) return undefined;
+  return { address, price: price > 0 && price < 1e7 ? price : undefined, symbol, platformId };
+}
+
+// GET /api/v1/dex/aggregator/quote  (buy USDT→stock, sell stock→USDT/BNB, or stock→stock)
+export function mockQuote(q: {
+  amount: string;
+  fromTokenAddress?: string;
+  toTokenAddress: string;
+  userWalletAddress?: string;
+  hint?: DemoHint;
+}): OCResult<QuoteRoute[]> {
+  const fromAddr = q.fromTokenAddress ?? USDT_BSC;
+  const toAddr = q.toTokenAddress;
+  const { fromStock, toStock, fromPrice, toPrice, fromToken, toToken } = routeTokens(fromAddr, toAddr, q.hint);
+  const stock = toStock ?? fromStock;
+  if (!stock && !isNativeBnb(toAddr) && toAddr.toLowerCase() !== USDT_BSC.toLowerCase()) {
+    return err(40421, "Insufficient liquidity for this trading pair");
+  }
+  const fromUnits = Number(BigInt(q.amount)) / 1e18;
+  const usdIn = fromUnits * fromPrice;
+  // Ondo minimum only applies when spending USDT to buy Ondo.
+  if (toStock?.platformId === "ondo" && fromAddr.toLowerCase() === USDT_BSC.toLowerCase() && usdIn < 20) {
     return err(40375, "ONDO_FROM_USD_AMOUNT_TOO_SMALL: Minimum order amount is 20 USD.");
   }
-  const rfqOut = (usd / tokenPrice) * 0.9985; // market-maker spread ~0.15%
-  const ammOut = (usd / tokenPrice) * (0.9962 - usd / 1_000_000); // pool fee + price impact
+  const outTokens = (usdIn / toPrice) * 0.9985;
+  const ammOut = (usdIn / toPrice) * (0.9962 - Math.min(usdIn, 500) / 1_000_000);
+  const isBuyOndo = toStock?.platformId === "ondo" && fromAddr.toLowerCase() === USDT_BSC.toLowerCase();
+  const isSellOrSwap = fromStock !== null || isNativeBnb(fromAddr);
+
   const rfq: QuoteRoute = {
     quoteId: hexFrom("rfq" + Date.now() + randomUUID(), 16),
     vendorName: "PcsXRfq",
     binanceChainId: BINANCE_CHAIN_ID,
     fromTokenAmount: q.amount,
-    toTokenAmount: toUnits(rfqOut),
+    toTokenAmount: toUnits(outTokens),
     tradeFee: "0.00",
     estimateGasFee: "0",
     priceImpactPercent: "-0.15",
-    router: `${USDT_BSC}--${q.toTokenAddress}`,
+    router: `${fromAddr}--${toAddr}`,
     fromToken,
     toToken,
     dexRouterList: [
       {
         dexProtocol: { dexName: "PancakeSwap X (RFQ)", percent: "100.00" },
-        fromToken: { tokenContractAddress: USDT_BSC, tokenSymbol: "USDT" },
+        fromToken: { tokenContractAddress: fromAddr, tokenSymbol: fromToken.tokenSymbol },
         fromTokenIndex: "0",
-        toToken: { tokenContractAddress: q.toTokenAddress, tokenSymbol: toToken.tokenSymbol },
+        toToken: { tokenContractAddress: toAddr, tokenSymbol: toToken.tokenSymbol },
         toTokenIndex: "1",
       },
     ],
@@ -268,45 +343,66 @@ export function mockQuote(q: { amount: string; toTokenAddress: string; userWalle
     feeToken: null,
     actualSwapAmount: null,
   };
-  if (s.platformId === "ondo") {
-    // Ondo is RFQ-only (InchFusion + CowSwap + PcsXRfq).
-    const inch: QuoteRoute = { ...rfq, quoteId: hexFrom("inch" + Date.now(), 16), vendorName: "InchFusion", toTokenAmount: toUnits(rfqOut * 0.9991), isBest: false, approveTarget: "0x111111125421cA6dc452d289314280a0f8842A65", dexRouterList: [{ ...rfq.dexRouterList![0], dexProtocol: { dexName: "1inch Fusion (RFQ)", percent: "100.00" } }] };
+
+  if (isBuyOndo) {
+    const inch: QuoteRoute = {
+      ...rfq,
+      quoteId: hexFrom("inch" + Date.now(), 16),
+      vendorName: "InchFusion",
+      toTokenAmount: toUnits(outTokens * 0.9991),
+      isBest: false,
+      approveTarget: "0x111111125421cA6dc452d289314280a0f8842A65",
+      dexRouterList: [{ ...rfq.dexRouterList![0], dexProtocol: { dexName: "1inch Fusion (RFQ)", percent: "100.00" } }],
+    };
     return ok([rfq, inch]);
   }
+
+  // Sell / stock→stock / bStock buy: prefer AMM (+ RFQ when buying bStock with USDT)
   const amm: QuoteRoute = {
     ...rfq,
     quoteId: hexFrom("amm" + Date.now() + randomUUID(), 16),
     vendorName: "LiquidMesh",
     toTokenAmount: toUnits(ammOut),
-    tradeFee: "0.04",
+    tradeFee: isNativeBnb(toAddr) ? "0.00" : "0.04",
     estimateGasFee: "185000",
-    priceImpactPercent: (-0.38 - usd / 10000).toFixed(2),
+    priceImpactPercent: (-0.38 - usdIn / 10000).toFixed(2),
     executionMode: "SWAP",
     approveTarget: DEMO_ROUTER,
-    isBest: false,
+    isBest: isSellOrSwap || !toStock,
     dexRouterList: [
       {
         dexProtocol: { dexName: "PancakeSwap V3", percent: "100.00" },
-        fromToken: { tokenContractAddress: USDT_BSC, tokenSymbol: "USDT" },
+        fromToken: { tokenContractAddress: fromAddr, tokenSymbol: fromToken.tokenSymbol },
         fromTokenIndex: "0",
-        toToken: { tokenContractAddress: q.toTokenAddress, tokenSymbol: toToken.tokenSymbol },
+        toToken: { tokenContractAddress: toAddr, tokenSymbol: toToken.tokenSymbol },
         toTokenIndex: "1",
       },
     ],
   };
-  return ok([rfq, amm]);
+
+  // Buying bStock with USDT: RFQ + AMM like before
+  if (fromAddr.toLowerCase() === USDT_BSC.toLowerCase() && toStock?.platformId === "bstock") {
+    rfq.isBest = true;
+    amm.isBest = false;
+    return ok([rfq, amm]);
+  }
+  // Sell / cross-stock: AMM only in demo (matches live LiquidMesh-only quotes we saw)
+  return ok([{ ...amm, isBest: true }]);
 }
 
 // GET /api/v1/dex/aggregator/swap
 export function mockSwap(q: {
   amount: string;
+  fromTokenAddress?: string;
   toTokenAddress: string;
   userWalletAddress: string;
   slippagePercent: string;
   quoteId: string;
   routeHint?: string; // our own hint (demo only): "SWAP" | "RFQ:<vendor>"
+  hint?: DemoHint;
 }): OCResult<SwapData> {
-  const quote = mockQuote({ amount: q.amount, toTokenAddress: q.toTokenAddress });
+  const fromAddr = q.fromTokenAddress ?? USDT_BSC;
+  const quote = mockQuote({ amount: q.amount, fromTokenAddress: fromAddr, toTokenAddress: q.toTokenAddress, hint: q.hint });
   if (!quote.data) return quote as OCResult<never>;
   const wantRfq = (q.routeHint ?? "RFQ").startsWith("RFQ");
   const vendor = q.routeHint?.split(":")[1] ?? "PcsXRfq";
@@ -366,14 +462,14 @@ export function mockSwap(q: {
     primaryType: "PermitWitnessTransferFrom",
     domain: { name: "Permit2", chainId: 56, verifyingContract: DEMO_PERMIT2 },
     message: {
-      permitted: { token: USDT_BSC, amount: q.amount },
+      permitted: { token: fromAddr, amount: q.amount },
       spender: DEMO_ROUTER,
       nonce: String(parseInt(hexFrom(q.quoteId, 6), 16)),
       deadline: String(deadline),
       witness: {
         maker: "0x7a9f00000000000000000000000000000000a001",
         taker: q.userWalletAddress,
-        inputToken: USDT_BSC,
+        inputToken: fromAddr,
         outputToken: q.toTokenAddress,
         inputAmount: q.amount,
         outputAmount: r.toTokenAmount,
@@ -397,7 +493,7 @@ export function mockSwap(q: {
 }
 
 // GET /api/v1/dex/aggregator/approve-transaction
-export function mockApprove(q: { approveAmount: string; vendor?: string }): OCResult<ApproveTx[]> {
+export function mockApprove(q: { approveAmount: string; vendor?: string; tokenContractAddress?: string }): OCResult<ApproveTx[]> {
   const spender = q.vendor === "PcsXRfq" ? DEMO_PERMIT2 : q.vendor === "InchFusion" ? "0x111111125421cA6dc452d289314280a0f8842A65" : DEMO_ROUTER;
   const data =
     "0x095ea7b3" +
@@ -460,8 +556,8 @@ export function mockOrderStatus(orderId: string, polls: number, amountIn?: strin
 }
 
 // GET /api/v1/dex/post-transaction/transaction-detail-by-txhash
-export function mockTxDetail(txHash: string, wallet?: string, token?: string, amountIn?: string, amountOut?: string): OCResult<TxDetail[]> {
-  const s = token ? findAnyStock(token) : undefined;
+export function mockTxDetail(txHash: string, wallet?: string, token?: string, amountIn?: string, amountOut?: string, symbol?: string): OCResult<TxDetail[]> {
+  const s = token ? findAnyStock(token) ?? (symbol ? { symbol } : undefined) : undefined;
   return ok([
     {
       chainIndex: BINANCE_CHAIN_ID,

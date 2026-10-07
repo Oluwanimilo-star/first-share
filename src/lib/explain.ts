@@ -102,5 +102,46 @@ export function friendlyError(code: number, msg: string): string {
     50000: "The trading service hit an error. Please try again.",
     50001: "The trading service is temporarily unavailable. Please try again shortly.",
   };
-  return m[code] ?? `${msg || "Something went wrong"} (code ${code})`;
+  if (m[code]) return m[code];
+  // Never surface raw gateway text to beginners.
+  if (code === -1) return "We couldn't reach the market data service. Please try again.";
+  // Common gateway / chain phrases that leak through unknown codes
+  const lower = (msg || "").toLowerCase();
+  if (/outside trading hours|market.?closed|40369|40367/.test(lower)) {
+    return "Trading is closed for this stock right now. Come back when the US market is open.";
+  }
+  if (/insufficient liquidity|40421|40374/.test(lower)) {
+    return "There isn't enough liquidity for this trade right now. Try a smaller amount or another stock.";
+  }
+  if (/quote.*(expir|invalid)|40401/.test(lower)) {
+    return "The price quote expired (they only last ~30 seconds). Let's grab a fresh one.";
+  }
+  return "Something went wrong loading this step. Please try again in a moment.";
+}
+
+/** Map on-chain / simulator failReason strings to plain English. Never return raw gateway text. */
+export type SimFailKind = "allowance" | "balance" | "closed" | "other";
+
+export function classifySimFail(reason: string | null | undefined): SimFailKind {
+  const r = (reason || "").toLowerCase();
+  if (/allowance|transfer_from_failed|\bstf\b|exceeds allowance/.test(r)) return "allowance";
+  if (/exceeds balance|insufficient (funds|balance)|transfer amount exceeds balance|erc20: transfer amount exceeds balance|bep20: transfer amount exceeds balance/.test(r)) {
+    return "balance";
+  }
+  if (/trading hours|market.?closed|paused/.test(r)) return "closed";
+  return "other";
+}
+
+export function friendlySimFail(reason: string | null | undefined): string {
+  const kind = classifySimFail(reason);
+  if (kind === "allowance") {
+    return "Would fail right now — only because the spending permission hasn't been given yet. That's expected; we'll ask for it first when you buy.";
+  }
+  if (kind === "balance") {
+    return "Would fail right now because this wallet doesn't have enough tokens for the rehearsal. That's fine — when you trade for real we check your balance first.";
+  }
+  if (kind === "closed") {
+    return "Would fail because trading is closed right now. Come back when the US market is open.";
+  }
+  return "The dress rehearsal couldn't complete this part. Your money is safe — nothing was sent. You can still continue; we'll re-check everything before a real trade.";
 }

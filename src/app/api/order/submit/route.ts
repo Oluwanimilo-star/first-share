@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { isDemoMode, w3w } from "@/lib/server/w3w";
+import { isDemoRequest, w3w } from "@/lib/server/w3w";
 import { mockOrderSubmit } from "@/lib/server/mock";
 import { bad, reply } from "@/lib/server/http";
 import type { OrderSubmitData } from "@/lib/types";
@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
  * → POST /api/v1/dex/aggregator/order/submit  (RFQ: Ondo / bStock PcsXRfq routes)
  */
 export async function POST(req: NextRequest) {
-  const demo = isDemoMode();
+  const demo = isDemoRequest(req);
   let b: Record<string, unknown>;
   try {
     b = await req.json();

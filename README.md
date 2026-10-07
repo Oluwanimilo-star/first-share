@@ -34,6 +34,26 @@ Built for **BNB Hack: Tokenized Stocks Edition** on the Binance Web3 API.
   switch (pre-market, closed, paused…) so you can demo every market state.
 - **Live mode** turns on when `BINANCE_W3W_API_KEY` and `BINANCE_W3W_API_SECRET` are set. Real prices, real
   quotes, real trades from the user's own wallet on BNB Smart Chain (chain 56).
+- **"Try demo" toggle** (header, next to Connect wallet — or open
+  [`/?demo=1`](https://first-share-two.vercel.app/?demo=1)) works *even when live keys exist*: a pretend wallet
+  (`0xf125…125e`, $25 USDT + 0.012 BNB), **live** market data and prices, but a sample quote, a rehearsed
+  signature and a fake receipt. The browser sends `x-first-share-demo: 1`, and the trade routes (quote / swap /
+  approve / simulate / order / tx) answer with mocked responses — forcing a mock can only remove the ability
+  to trade, never add it. Real wallet stays the default.
+
+### Guard rails (so nobody gets stuck)
+- **Price on every card** — tokens without a live price are tucked away; curated tokens missing from
+  `/rwa/tokens` get a price from `/rwa/price`.
+- **Step 4 never fails** — if `/rwa/underlying-market` doesn't answer, the status is worked out from the NYSE
+  timetable (9:30–16:00 New York, weekdays, 2026–27 holidays) and labelled *estimated from market hours*.
+- **Network guard** — on any chain other than 56 we don't quote, and the Buy step refuses to sign.
+- **Balance preflight** — BNB for gas + USDT on BSC, with a one-sentence fix and a Binance withdraw guide link.
+- **Quote countdown** — 30 s timer, auto-refresh at zero; the executor re-quotes if a price is >20 s old and
+  won't submit an RFQ order signed after the price expired.
+- **One risk check** — "This can go down, and it's not a broker account" before any buy.
+- **Never a dead button** — no wallet → "Connect wallet to rehearse" (+ Try demo); failed quote/rehearsal →
+  "Try again"; step pills jump to any visited/allowed step.
+- **Share card** after a buy (PNG download, copy text, post to X) and **Holdings P/L** from a local buy ledger.
 
 ### What a buyer needs in live mode
 - A wallet (MetaMask, Binance Wallet, Trust Wallet…) on BNB Smart Chain

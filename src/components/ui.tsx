@@ -124,10 +124,10 @@ export function ExtLink({ href, children, className = "" }: { href: string; chil
   );
 }
 
-export function SectionTitle({ step, title, subtitle }: { step: number; title: string; subtitle?: string }) {
+export function SectionTitle({ step, title, subtitle }: { step?: number; title: string; subtitle?: string }) {
   return (
     <div>
-      <p className="text-xs font-bold uppercase tracking-wider text-amber-600">Step {step} of 9</p>
+      {step != null ? <p className="text-xs font-bold uppercase tracking-wider text-amber-600">Step {step} of 9</p> : null}
       <h2 className="mt-1 text-2xl font-extrabold leading-tight text-ink sm:text-3xl">{title}</h2>
       {subtitle ? <p className="mt-1 text-[15px] text-slate-600">{subtitle}</p> : null}
     </div>

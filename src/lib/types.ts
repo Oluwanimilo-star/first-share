@@ -90,6 +90,8 @@ export type RwaProfile = {
     conceptsCn: string[] | null;
     descriptionEn: string | null;
     descriptionZh: string | null;
+    /** Live API currently returns this instead of descriptionEn. */
+    description?: string | null;
   } | null;
 };
 
